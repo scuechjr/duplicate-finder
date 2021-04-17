@@ -1,5 +1,6 @@
 # duplicate-finder
 主要进行简单小文件的对比，目前对识别出来的重复文件仅支持直接删除或者迁移到扫描日志目录下，并未提供接口进行指定文件删除、查看和迁移。
+![image](https://github.com/scuechjr/duplicate-finder/blob/main/image.png?raw=true)
 
 ## 开发/运行环境
 maven、jdk9+
@@ -13,7 +14,7 @@ mvn clean -U packate -Dmaven.test.skip=true
 
 ## 运行
 ```shell
-java -jar java -jar duplicate-finder-0.0.1-SNAPSHOT.jar
+java -jar duplicate-finder-0.0.1-SNAPSHOT.jar
 ```
 
 ## 版本说明

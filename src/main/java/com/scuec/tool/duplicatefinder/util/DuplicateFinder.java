@@ -1,15 +1,12 @@
 package com.scuec.tool.duplicatefinder.util;
 
-import org.apache.commons.codec.binary.Hex;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -17,7 +14,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class DuplicateFinder {
     private static final ExecutorService executor = Executors.newFixedThreadPool(20);
-    private static final String DOT = ".";
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
     public interface ScanListener {
@@ -26,13 +22,15 @@ public class DuplicateFinder {
         void process(long count);
 
         void finish(long count);
+
+        void totalCount(long count);
     }
 
     private static final Logger LOGGER = LoggerFactory.getLogger(DuplicateFinder.class);
+    private static final String UNDER_LINE = "_";
     private final List<ScanListener> listeners = new ArrayList<>();
-    private final Map<String, String> md5AndFilePathMap = new ConcurrentHashMap<>();
+    private final Map<String, List<File>> fileMap = new ConcurrentHashMap<>();
     private final AtomicLong count = new AtomicLong(0);
-    private List<String> scanFileTypes = new ArrayList<>();
     private final List<String> filterSuffixes = new ArrayList<>();
 
     public static DuplicateFinder create() {
@@ -90,6 +88,7 @@ public class DuplicateFinder {
             }
         }
 
+        notifyTotalCount(count);
         return count;
     }
 
@@ -103,7 +102,7 @@ public class DuplicateFinder {
             if (file.isDirectory()) {
                 count += count(file, suffixes);
             } else {
-                String suffix = getFileSuffix(file.getName());
+                String suffix = Utils.getFileSuffix(file.getName());
                 if (CollectionUtils.isNotEmpty(suffixes) && !suffixes.contains(suffix)) {
                     continue;
                 }
@@ -193,10 +192,20 @@ public class DuplicateFinder {
     }
 
     private void initContext(List<String> suffixes) {
-        md5AndFilePathMap.clear();
+        fileMap.clear();
         count.set(0);
         filterSuffixes.clear();
         filterSuffixes.addAll(Utils.clear(suffixes));
+    }
+
+    private void notifyTotalCount(Long count) {
+        for (ScanListener listener : listeners) {
+            try {
+                listener.totalCount(count);
+            } catch (Throwable t) {
+                LOGGER.warn("totalCount 监听器执行异常", t);
+            }
+        }
     }
 
     private void notifyDuplicate(String first, String duplicate) {
@@ -204,7 +213,7 @@ public class DuplicateFinder {
             try {
                 listener.duplicate(first, duplicate);
             } catch (Throwable t) {
-                t.printStackTrace();
+                LOGGER.warn("duplicate 监听器执行异常", t);
             }
         }
     }
@@ -214,7 +223,7 @@ public class DuplicateFinder {
             try {
                 listener.process(count);
             } catch (Throwable t) {
-                t.printStackTrace();
+                LOGGER.warn("process 监听器执行异常", t);
             }
         }
     }
@@ -224,7 +233,7 @@ public class DuplicateFinder {
             try {
                 listener.finish(count);
             } catch (Throwable t) {
-                t.printStackTrace();
+                LOGGER.warn("finish 监听器执行异常", t);
             }
         }
     }
@@ -237,29 +246,62 @@ public class DuplicateFinder {
             if (file.isDirectory()) {
                 scan(file);
             } else {
-                String suffix = getFileSuffix(file.getName());
+                String suffix = Utils.getFileSuffix(file.getName());
                 if (isFilter(suffix)) {
                     continue;
                 }
                 count.incrementAndGet();
-                String fileMd5 = getMD5(file);
-                String filePath = md5AndFilePathMap.get(fileMd5);
-                if (null != filePath) {
-                    try {
-                        if (fileEquals(file, new File(filePath))) {
-                            notifyDuplicate(filePath, file.getAbsolutePath());
-                        } else {
-                            LOGGER.warn("md5重复的不同文件，file1: {}, file2: {}", filePath, file.getAbsolutePath());
+                String key = mapKey(suffix, file);
+                List<File> fileList = fileMap.get(key);
+                if (CollectionUtils.isEmpty(fileList) || notMatchIn(file, fileList)) {
+                    List<File> newFileList = Collections.singletonList(file);
+                    List<File> mapFileList = fileMap.putIfAbsent(key, newFileList);
+                    if (null != mapFileList) {
+                        synchronized (mapFileList) {
+                            List<File> diff = diff(mapFileList, fileList);
+                            if (CollectionUtils.isEmpty(diff) || notMatchIn(file, fileList)) {
+                                mapFileList.add(file);
+                            }
                         }
-                    } catch (IOException e) {
-                        LOGGER.error("文件比较异常，file1: {}, file2: {}", filePath, file.getAbsolutePath(), e);
                     }
-                } else {
-                    md5AndFilePathMap.put(fileMd5, file.getAbsolutePath());
                 }
                 notifyProcess(count.get());
             }
         }
+    }
+
+    private List<File> diff(List<File> fileList, List<File> subFileList) {
+        if (CollectionUtils.isEmpty(subFileList)) {
+            return fileList;
+        }
+        if (fileList.size() == subFileList.size()) {
+            return new ArrayList<>();
+        }
+        List<File> diffList = new ArrayList<>();
+        for (File file : fileList) {
+            if (!subFileList.contains(file)) {
+                diffList.add(file);
+            }
+        }
+        return diffList;
+    }
+
+    private boolean notMatchIn(File file, List<File> fileList) {
+        for (File item : fileList) {
+            try {
+                if (FileUtils.contentEquals(file, item)) {
+                    notifyDuplicate(item.getAbsolutePath(), file.getAbsolutePath());
+                    return false;
+                }
+            } catch (IOException e) {
+                LOGGER.warn("文件比较异常，file1: {}, file2: {}", item.getAbsolutePath(), file.getAbsolutePath(), e);
+            }
+        }
+        return true;
+    }
+
+    private String mapKey(String suffix, File file) {
+        return suffix + UNDER_LINE + file.length() + UNDER_LINE + Utils.getMD5(file);
     }
 
     private boolean isStop() {
@@ -268,60 +310,5 @@ public class DuplicateFinder {
 
     private boolean isFilter(String suffix) {
         return CollectionUtils.isNotEmpty(filterSuffixes) && !filterSuffixes.contains(suffix);
-    }
-
-    /**
-     * 根据文件名获取文件后缀
-     *
-     * @param filepath
-     * @return
-     */
-    public static String getFileSuffix(String filepath) {
-        int index = filepath.lastIndexOf(DOT);
-        return index > -1 && index < filepath.length() ? filepath.substring(index + 1).toLowerCase() : null;
-    }
-
-    /**
-     * 比较两个文件是否相同
-     *
-     * @param file1
-     * @param file2
-     * @return
-     * @throws IOException
-     */
-    public static boolean fileEquals(File file1, File file2) throws IOException {
-        String file1Suffix = getFileSuffix(file1.getName());
-        String file2Suffix = getFileSuffix(file2.getName());
-        return Objects.equals(file1Suffix, file2Suffix) && FileUtils.contentEquals(file1, file2);
-    }
-
-    /**
-     * 获取一个文件的md5值(可处理大文件)
-     *
-     * @return md5 value
-     */
-    public static String getMD5(File file) {
-        FileInputStream fileInputStream = null;
-        try {
-            MessageDigest MD5 = MessageDigest.getInstance("MD5");
-            fileInputStream = new FileInputStream(file);
-            byte[] buffer = new byte[8192];
-            int length;
-            while ((length = fileInputStream.read(buffer)) != -1) {
-                MD5.update(buffer, 0, length);
-            }
-            return new String(Hex.encodeHex(MD5.digest()));
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        } finally {
-            try {
-                if (fileInputStream != null) {
-                    fileInputStream.close();
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
     }
 }

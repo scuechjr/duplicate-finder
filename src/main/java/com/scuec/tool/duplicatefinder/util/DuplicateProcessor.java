@@ -1,6 +1,7 @@
 package com.scuec.tool.duplicatefinder.util;
 
 import com.alibaba.fastjson.JSON;
+import com.scuec.tool.duplicatefinder.enums.ProcessTypeEnum;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateFormatUtils;
 
@@ -73,8 +74,9 @@ public class DuplicateProcessor implements DuplicateFinder.ScanListener {
         this.moveDirPath = null;
     }
 
-    public enum ProcessTypeEnum {
-        SCAN, REMOVE, MOVE
+    @Override
+    public void totalCount(long count) {
+
     }
 
     public class FinderLogger {

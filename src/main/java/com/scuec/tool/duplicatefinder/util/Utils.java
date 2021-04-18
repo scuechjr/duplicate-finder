@@ -1,6 +1,8 @@
 package com.scuec.tool.duplicatefinder.util;
 
+import org.apache.commons.codec.binary.Hex;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,13 +11,20 @@ import javax.swing.*;
 import javax.swing.filechooser.FileSystemView;
 import java.awt.*;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 public class Utils {
     private static final Logger LOGGER = LoggerFactory.getLogger(Utils.class);
+    private static final String DOT = ".";
+
+
     /**
      * 打开选择文件夹的窗口
      * @return
@@ -96,5 +105,61 @@ public class Utils {
             return Desktop.getDesktop().moveToTrash(file);
         }
         return false;
+    }
+
+    /**
+     * 根据文件名获取文件后缀
+     *
+     * @param filepath
+     * @return
+     */
+    public static String getFileSuffix(String filepath) {
+        int index = filepath.lastIndexOf(DOT);
+        return index > -1 && index < filepath.length() ? filepath.substring(index + 1).toLowerCase() : null;
+    }
+
+    /**
+     * 比较两个文件是否相同
+     *
+     * @param file1
+     * @param file2
+     * @return
+     * @throws IOException
+     */
+    public static boolean fileEquals(File file1, File file2) throws IOException {
+        String file1Suffix = getFileSuffix(file1.getName());
+        String file2Suffix = getFileSuffix(file2.getName());
+        return Objects.equals(file1Suffix, file2Suffix) && FileUtils.contentEquals(file1, file2);
+    }
+
+    /**
+     * 获取一个文件的md5值(可处理大文件)
+     *
+     * @return md5 value
+     */
+    public static String getMD5(File file) {
+        FileInputStream fileInputStream = null;
+        try {
+            MessageDigest MD5 = MessageDigest.getInstance("MD5");
+            fileInputStream = new FileInputStream(file);
+            byte[] buffer = new byte[8192];
+            int length;
+            while ((length = fileInputStream.read(buffer)) != -1) {
+                MD5.update(buffer, 0, length);
+            }
+            return new String(Hex.encodeHex(MD5.digest()));
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        } finally {
+            try {
+                if (fileInputStream != null) {
+                    fileInputStream.close();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+                LOGGER.warn("stream close error!", e);
+            }
+        }
     }
 }

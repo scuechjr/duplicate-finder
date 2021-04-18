@@ -1,5 +1,9 @@
 package com.scuec.tool.duplicatefinder;
 
+import com.scuec.tool.duplicatefinder.config.Config;
+import com.scuec.tool.duplicatefinder.config.ConfigUtils;
+import com.scuec.tool.duplicatefinder.enums.ProcessTypeEnum;
+import com.scuec.tool.duplicatefinder.enums.ScanFileTypeEnum;
 import com.scuec.tool.duplicatefinder.util.DuplicateFinder;
 import com.scuec.tool.duplicatefinder.util.DuplicateProcessor;
 import com.scuec.tool.duplicatefinder.util.Utils;
@@ -10,16 +14,20 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Vector;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 public class FinderUI extends JFrame {
-    GridBagLayout layout = new GridBagLayout();
-    GridBagConstraints constraints = new GridBagConstraints();
+    private GridBagLayout layout = new GridBagLayout();
+    private GridBagConstraints constraints = new GridBagConstraints();
+    private Thread finderCountThread = null;
 
     public FinderUI() {
         initFrame();
@@ -36,9 +44,73 @@ public class FinderUI extends JFrame {
         constraints.fill = GridBagConstraints.BOTH;    //组件填充显示区域
         layoutComponents();
         initActionListener();
+        initApplicationConfig();
+    }
+
+    private void initApplicationConfig() {
+        Config config = ConfigUtils.loadConfig();
+
+        folders.clear();
+        for (String folder : config.getScanFolderList()) {
+            folders.add(new Vector<>(Collections.singleton(folder)));
+        }
+
+        if (ScanFileTypeEnum.ALL.equals(config.getScanFileType())) {
+            allFileTypeRadio.setSelected(true);
+        } else if (ScanFileTypeEnum.NORMAL.equals(config.getScanFileType())) {
+            normalFileTypeRadio.setSelected(true);
+        }
+
+        if (ProcessTypeEnum.SCAN.equals(config.getProcessType())) {
+            scanRadio.setSelected(true);
+        } else if (ProcessTypeEnum.MOVE.equals(config.getProcessType())) {
+            moveRadio.setSelected(true);
+        } else {
+            removeRadio.setSelected(true);
+        }
+
+        scanRootPath.setText(config.getScanLogRoot());
+    }
+
+    private Config getApplicationConfig() {
+        Config config = ConfigUtils.loadConfig();
+
+        List<String> scanFolderList = new ArrayList<>();
+        for (Vector<String> folder : folders) {
+            scanFolderList.addAll(folder);
+        }
+        config.setScanFolderList(scanFolderList);
+
+        if (allFileTypeRadio.isSelected()) {
+            config.setScanFileType(ScanFileTypeEnum.ALL);
+        } else if (normalFileTypeRadio.isSelected()) {
+            config.setScanFileType(ScanFileTypeEnum.NORMAL);
+        }
+
+        if (scanRadio.isSelected()) {
+            config.setProcessType(ProcessTypeEnum.SCAN);
+        } else if (moveRadio.isSelected()) {
+            config.setProcessType(ProcessTypeEnum.MOVE);
+        } else {
+            config.setProcessType(ProcessTypeEnum.REMOVE);
+        }
+
+        config.setScanLogRoot(scanRootPath.getText());
+
+        return config;
     }
 
     private void initActionListener() {
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                try {
+                    ConfigUtils.saveConfig(getApplicationConfig());
+                } finally {
+                    super.windowClosing(e);
+                }
+            }
+        });
         addFolder.addActionListener(e -> {
             java.util.List<String> folderPaths = Utils.selectFolders();
             if (CollectionUtils.isNotEmpty(folderPaths)) {
@@ -96,27 +168,38 @@ public class FinderUI extends JFrame {
                         scanResult.setVisible(true);
                         scanResult.setText("本次扫描文件" + scanCount.get() + "个，发现重复文件" + duplicateCount.get() + "个");
                     }
+
+                    @Override
+                    public void totalCount(long count) {
+                        totalCount.set(count);
+                    }
                 });
-                DuplicateProcessor.ProcessTypeEnum processType = DuplicateProcessor.ProcessTypeEnum.SCAN;
+                ProcessTypeEnum processType = ProcessTypeEnum.SCAN;
                 if (moveRadio.isSelected()) {
-                    processType = DuplicateProcessor.ProcessTypeEnum.MOVE;
+                    processType = ProcessTypeEnum.MOVE;
                 } else if (removeRadio.isSelected()) {
-                    processType = DuplicateProcessor.ProcessTypeEnum.REMOVE;
+                    processType = ProcessTypeEnum.REMOVE;
                 }
                 finder.addListener(new DuplicateProcessor(scanRootPath.getText(), processType));
 
-                long count = finder.count(dirs, allFileTypeRadio.isSelected() ? new String[]{} : normalFileType);
-                totalCount.set(count);
-                scanProgressBar.setMaximum((int)count);
+                finderCountThread = new Thread(() -> {
+                    long count = finder.count(dirs, allFileTypeRadio.isSelected() ? new String[]{} : normalFileType);
+                    totalCount.set(count);
+                    scanProgressBar.setMaximum((int) count);
 
-                duplicateCount.set(0);
-                scanCount.set(0);
-                finder.scan(true, dirs, allFileTypeRadio.isSelected() ? new String[]{} : normalFileType);
+                    duplicateCount.set(0);
+                    scanCount.set(0);
+                    finder.scan(true, dirs, allFileTypeRadio.isSelected() ? new String[]{} : normalFileType);
+                });
+                finderCountThread.start();
             } else {
                 scan.setText("开始扫描");
                 scanProgressBar.setVisible(false);
                 scanResult.setVisible(true);
                 scanResult.setText("本次扫描文件" + scanCount.get() + "个，发现重复文件" + duplicateCount.get() + "个");
+                if (null != finderCountThread && finderCountThread.isAlive()) {
+                    finderCountThread.interrupt();
+                }
             }
         });
 

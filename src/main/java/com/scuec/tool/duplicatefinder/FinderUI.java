@@ -27,7 +27,7 @@ import java.util.stream.Collectors;
 public class FinderUI extends JFrame {
     private GridBagLayout layout = new GridBagLayout();
     private GridBagConstraints constraints = new GridBagConstraints();
-    private Thread finderCountThread = null;
+    private DuplicateFinder finder = null;
 
     public FinderUI() {
         initFrame();
@@ -148,7 +148,7 @@ public class FinderUI extends JFrame {
 
                 // 启动扫描
                 java.util.List<String> dirs = folders.stream().map(row -> row.get(0)).collect(Collectors.toList());
-                DuplicateFinder finder = DuplicateFinder.create(new DuplicateFinder.ScanListener() {
+                finder = DuplicateFinder.create(new DuplicateFinder.ScanListener() {
                     @Override
                     public void duplicate(String first, String duplicate) {
                         duplicateCount.incrementAndGet();
@@ -182,7 +182,7 @@ public class FinderUI extends JFrame {
                 }
                 finder.addListener(new DuplicateProcessor(scanRootPath.getText(), processType));
 
-                finderCountThread = new Thread(() -> {
+                new Thread(() -> {
                     long count = finder.count(dirs, allFileTypeRadio.isSelected() ? new String[]{} : normalFileType);
                     totalCount.set(count);
                     scanProgressBar.setMaximum((int) count);
@@ -190,15 +190,14 @@ public class FinderUI extends JFrame {
                     duplicateCount.set(0);
                     scanCount.set(0);
                     finder.scan(true, dirs, allFileTypeRadio.isSelected() ? new String[]{} : normalFileType);
-                });
-                finderCountThread.start();
+                }).start();
             } else {
                 scan.setText("开始扫描");
                 scanProgressBar.setVisible(false);
                 scanResult.setVisible(true);
                 scanResult.setText("本次扫描文件" + scanCount.get() + "个，发现重复文件" + duplicateCount.get() + "个");
-                if (null != finderCountThread && finderCountThread.isAlive()) {
-                    finderCountThread.interrupt();
+                if (null != finder) {
+                    finder.stop();
                 }
             }
         });

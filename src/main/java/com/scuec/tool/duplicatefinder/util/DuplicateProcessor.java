@@ -85,7 +85,9 @@ public class DuplicateProcessor implements DuplicateFinder.ScanListener {
         private final PrintWriter writer;
 
         public FinderLogger(String rootBase) throws FileNotFoundException {
-            this.writer = new PrintWriter(rootBase + File.separator + ROOT_NAME + File.separator + SCAN_LOG + DOT + token);
+            String root = rootBase + File.separator + ROOT_NAME;
+            Utils.mkdirs(root);
+            this.writer = new PrintWriter( root + File.separator + SCAN_LOG + DOT + token);
         }
 
         public boolean scanLog(String type, String label, String first, String duplicate) {
